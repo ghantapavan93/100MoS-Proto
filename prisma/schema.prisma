@@ -1,0 +1,247 @@
+generator client {
+  provider      = "prisma-client-js"
+  engineType    = "library"
+  binaryTargets = ["native"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id             String    @id
+  createdAt      DateTime  @default(now()) @map("created_at")
+  whyStatement   String?   @map("why_statement")
+  careTagsJson   String?   @map("care_tags_json")
+  crewResponse   String?   @map("crew_response")
+  contacted      Boolean   @default(false)
+  lastNudgedAt   DateTime? @map("last_nudged_at")
+  nudgeCount     Int       @default(0) @map("nudge_count")
+  
+  activities     Activity[]
+  crewMembership CrewMembership?
+  aggregates     UserAggregate?
+  syncRuns       SyncRun[]
+  incidents      Incident[]
+  adjustments    Adjustment[]
+  corrections    ActivityCorrection[]
+  userActions    UserAction[]
+  syncRequests   SyncRequest[]
+  providerTokens ProviderToken[]
+  userState      UserState?
+  motivation     MotivationEvent[]
+
+  @@map("users")
+}
+
+model CrewMembership {
+  userId   String   @id @map("user_id")
+  crewId   String?  @map("crew_id")
+  joinedAt DateTime @default(now()) @map("joined_at")
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("crew_membership")
+}
+
+model Activity {
+  id                 String   @id // provider:external_id
+  userId             String   @map("user_id")
+  provider           String
+  externalActivityId String   @map("external_activity_id")
+  ts                 DateTime
+  miles              Float
+  duration           Int
+  isExcluded         Boolean  @default(false) @map("is_excluded")
+  exclusionReason    String?  @map("exclusion_reason")
+  createdAt          DateTime @default(now()) @map("created_at")
+  
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notes       ActivityNote[]
+  corrections ActivityCorrection[] @relation("ActivityToCorrection")
+  legacyCorrs ActivityCorrection[] @relation("LegacyActivityToCorrection")
+
+  @@unique([provider, externalActivityId])
+  @@index([userId, ts(sort: Desc)])
+  @@map("activities")
+}
+
+model SyncRun {
+  id          Int      @id @default(autoincrement())
+  userId      String   @map("user_id")
+  provider    String
+  status      String   // success, rate-limited, outage, delayed
+  added       Int      @default(0)
+  dupes       Int      @default(0)
+  delayed     Int      @default(0)
+  rateLimited Int      @default(0) @map("rate_limited")
+  createdAt   DateTime @default(now()) @map("created_at")
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("sync_runs")
+}
+
+model SimulatorFlags {
+  id        Int      @id @default(1)
+  rateLimit Boolean  @default(false) @map("rate_limit")
+  delay     Boolean  @default(false)
+  duplicates Boolean @default(false)
+  outage    Boolean  @default(false)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("simulator_flags")
+}
+
+model Incident {
+  id        Int      @id @default(autoincrement())
+  msg       String
+  type      String   // warning, error, info
+  userId    String?  @map("user_id")
+  provider  String?
+  ts        DateTime @default(now())
+  
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([type, ts(sort: Desc)])
+  @@map("incidents")
+}
+
+model UserAggregate {
+  userId         String    @id @map("user_id")
+  totalMiles     Float     @default(0) @map("total_miles")
+  lastActivityTs DateTime? @map("last_activity_ts")
+  streakDays     Int       @default(0) @map("streak_days")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+  
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_aggregates")
+}
+
+model Adjustment {
+  id         Int      @id @default(autoincrement())
+  userId     String   @map("user_id")
+  milesDelta Float    @map("miles_delta")
+  reason     String
+  author     String
+  createdAt  DateTime @default(now()) @map("created_at")
+  
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("adjustments")
+}
+
+model OpsAuditLog {
+  id        Int      @id @default(autoincrement())
+  adminId   String   @default("system") @map("admin_id")
+  action    String
+  targetId  String?  @map("target_id")
+  metaJson  String?  @map("meta_json")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("ops_audit_log")
+}
+
+model ActivityCorrection {
+  id                 Int      @id @default(autoincrement())
+  activityId         String   @map("activity_id")
+  originalActivityId String?  @map("original_activity_id") // legacy
+  userId             String   @map("user_id")
+  deltaMiles         Float    @map("delta_miles")
+  newMiles           Float?   @map("new_miles") // legacy
+  newTs              DateTime? @map("new_ts")
+  newType            String?  @map("new_type")
+  notes              String?
+  reason             String?
+  source             String   @default("manual")
+  createdAt          DateTime @default(now()) @map("created_at")
+  
+  activity         Activity @relation("ActivityToCorrection", fields: [activityId], references: [id], onDelete: Cascade)
+  originalActivity Activity? @relation("LegacyActivityToCorrection", fields: [originalActivityId], references: [id], onDelete: Cascade)
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([activityId, createdAt(sort: Desc)])
+  @@map("activity_corrections")
+}
+
+model ActivityNote {
+  id         Int      @id @default(autoincrement())
+  activityId String   @map("activity_id")
+  noteText   String   @map("note_text")
+  createdAt  DateTime @default(now()) @map("created_at")
+  
+  activity   Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@index([activityId, createdAt(sort: Desc)])
+  @@map("activity_notes")
+}
+
+model UserAction {
+  id          String   @id
+  userId      String   @map("user_id")
+  actionType  String   @map("action_type")
+  payloadJson String?  @map("payload_json")
+  createdAt   DateTime @default(now()) @map("created_at")
+  expiresAt   DateTime? @map("expires_at")
+  undoneAt    DateTime? @map("undone_at")
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("user_actions")
+}
+
+model SyncRequest {
+  id          String    @id // request_id
+  userId      String    @map("user_id")
+  provider    String
+  status      String    @default("queued") // queued, completed, failed
+  createdAt   DateTime  @default(now()) @map("created_at")
+  completedAt DateTime? @map("completed_at")
+  
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("sync_requests")
+}
+
+model ProviderToken {
+  userId           String   @map("user_id")
+  provider         String
+  accessTokenStub  String?  @map("access_token_stub")
+  refreshTokenStub String?  @map("refresh_token_stub")
+  expiresAt        DateTime? @map("expires_at")
+  status           String   @default("active") // active, expired, error
+  lastRefreshAt    DateTime? @map("last_refresh_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+  
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, provider])
+  @@map("provider_tokens")
+}
+
+model UserState {
+  userId    String    @id @map("user_id")
+  mode      String    @default("normal") // normal, pit_stop
+  modeUntil DateTime? @map("mode_until")
+  note      String?
+  
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_state")
+}
+
+model MotivationEvent {
+  id        Int       @id @default(autoincrement())
+  userId    String    @map("user_id")
+  type      String
+  message   String
+  createdAt DateTime  @default(now()) @map("created_at")
+  shownAt   DateTime? @map("shown_at")
+  
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("motivation_events")
+}
